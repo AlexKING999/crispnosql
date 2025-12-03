@@ -13,93 +13,75 @@ st.set_page_config(page_title="Predicción de Incumplimiento CRISP-DM", layout="
 
 st.title("💳 Ciclo CRISP-DM con Firebase y Streamlit")
 
-# 1. CONEXIÓN SEGURA A FIREBASE (LECTURA DE SECRETS)
+# 1. CONEXIÓN SEGURA A FIREBASE
 if not firebase_admin._apps:
     try:
         key_dict = dict(st.secrets["firebase"])
         cred = credentials.Certificate(key_dict)
         firebase_admin.initialize_app(cred)
-        st.sidebar.success("✅ Conexión a Firebase Firestore exitosa.")
+        # No mostramos el éxito de la conexión aquí, lo hacemos en la función de carga.
     except Exception as e:
-        st.sidebar.error(f"❌ Error al conectar a Firebase. Revisa tus Secrets: {e}")
+        st.sidebar.error(f"❌ Error crítico en Secrets/Inicialización: {e}")
         st.stop()
 
 db = firestore.client()
 
-# --- FUNCIÓN DE CARGA (Cacheada para eficiencia) ---
+# --- FUNCIÓN DE CARGA (CORREGIDA Y RESILIENTE) ---
 @st.cache_data(ttl=600)
 def load_data_from_firestore():
-    users_ref = db.collection('credito_clientes') 
-    docs = users_ref.stream()
-    data = [doc.to_dict() for doc in docs]
-    df = pd.DataFrame(data)
-    
-    # *** CORRECCIÓN CRÍTICA: NORMALIZACIÓN DE COLUMNAS ***
-    # Esto asegura que 'EDUCATION' o 'Education' se convierta en 'education'
-    # y que el código de preparación no falle.
-    df.columns = [str(col).lower() for col in df.columns] 
-    
-    # Conversión de tipos (necesaria tras cargar desde Firestore)
-    for col in df.columns:
-        try:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-        except:
-            pass
-            
-    if 'unnamed:_0' in df.columns: 
-        df = df.drop(columns=['unnamed:_0'])
+    try:
+        users_ref = db.collection('credito_clientes') 
+        docs = users_ref.stream()
+        data = [doc.to_dict() for doc in docs]
         
-    return df
+        if not data:
+            st.warning("⚠️ Firebase: No se encontraron documentos en 'credito_clientes'. ¿Corrió el script de ingesta?")
+            return pd.DataFrame() # Retorna DataFrame vacío
+            
+        df = pd.DataFrame(data)
+        st.sidebar.success(f"✅ Conexión y carga exitosa: {len(df)} registros.")
+
+        # *** CORRECCIÓN CRÍTICA 1: NORMALIZACIÓN Y VERIFICACIÓN ***
+        df.columns = [str(col).lower() for col in df.columns] 
+
+        # Verificar que las columnas críticas existan después de la normalización
+        required_cols = ['education', 'marriage', 'default_payment_next_month']
+        for col in required_cols:
+            if col not in df.columns:
+                 st.error(f"🚨 Error: La columna requerida '{col}' no existe en la base de datos.")
+                 return pd.DataFrame()
+
+        # Conversión de tipos numérica
+        for col in df.columns:
+            try:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            except:
+                pass
+                
+        if 'unnamed:_0' in df.columns: 
+            df = df.drop(columns=['unnamed:_0'])
+            
+        return df
+
+    except Exception as e:
+        st.error(f"❌ Error al cargar datos de Firestore. Revisa las reglas de seguridad o la conexión: {e}")
+        return pd.DataFrame()
+
 
 # --- NAVEGACIÓN CRISP-DM (Las 6 fases) ---
 df_raw = load_data_from_firestore()
-# >>> AÑADIR ESTAS LÍNEAS TEMPORALMENTE PARA DEBUG:
-st.sidebar.subheader("DEBUG: Estado del DataFrame")
-st.sidebar.write(f"Filas cargadas: {df_raw.shape[0]}")
-st.sidebar.write(f"Columnas detectadas: {list(df_raw.columns)}")
-# <<< FIN DEBUG
 
 tabs = st.tabs(["1. Negocio", "2. Adquisición y Comprensión", "3. Preparación", "4. Modelado", "5. Evaluación", "6. Despliegue"])
 
-# ==========================================
-# FASE 1: ENTENDIMIENTO DEL NEGOCIO
-# ==========================================
-with tabs[0]:
-    st.header("🏢 Fase 1: Entendimiento del Negocio")
-    st.info("""
-    **Objetivo Empresarial:** Reducir las pérdidas financieras mediante la identificación temprana de clientes que probablemente incumplan sus obligaciones de pago.
-    
-    **Objetivo de DS:** Desarrollar un modelo de **Clasificación Binaria** que prediga si un cliente tendrá un incumplimiento (`default_payment_next_month = 1`).
-    
-    **Contexto Tecnológico:** Se utiliza **Firebase Firestore** como almacén de datos persistente y de baja latencia.
-    """)
-    st.subheader("Flujo de Trabajo CRISP-DM")
-    
+# --- Bloque de Control: Evita el KeyError si no hay datos ---
+if df_raw.empty and tabs[1] or tabs[2] or tabs[3] or tabs[4] or tabs[5]:
+    if not df_raw.empty: # Esta condición solo se cumple si hay un error y df_raw está vacío
+        with tabs[1]:
+            st.error("🛑 No se pueden mostrar las fases. El DataFrame está vacío.")
+            st.stop()
 
 # ==========================================
-# FASE 2: COMPRENSIÓN Y ADQUISICIÓN DE DATOS
-# ==========================================
-with tabs[1]:
-    st.header("💾 Fase 2: Comprensión y Adquisición de Datos")
-    
-    if df_raw.empty:
-        st.warning("No hay datos en Firestore. Ejecuta el script de ingesta.")
-    else:
-        st.success(f"Datos Adquiridos: {df_raw.shape[0]} registros y {df_raw.shape[1]} columnas.")
-        st.dataframe(df_raw.head())
-        
-        st.subheader("Análisis de la Variable Objetivo")
-        default_counts = df_raw['default_payment_next_month'].value_counts().reset_index()
-        default_counts.columns = ['Incumplimiento', 'Conteo']
-        default_counts['Incumplimiento'] = default_counts['Incumplimiento'].map({0: 'No Incumple (0)', 1: 'Incumple (1)'})
-        
-        fig_target = px.bar(default_counts, x='Incumplimiento', y='Conteo', 
-                            title='Distribución de la Variable Objetivo',
-                            color='Incumplimiento')
-        st.plotly_chart(fig_target, use_container_width=True)
-
-# ==========================================
-# FASE 3: PREPARACIÓN DE DATOS
+# FASE 3: PREPARACIÓN DE DATOS (Ahora segura)
 # ==========================================
 with tabs[2]:
     st.header("🧹 Fase 3: Preparación de Datos")
@@ -107,11 +89,10 @@ with tabs[2]:
     df = df_raw.copy()
     
     st.subheader("Estrategia de Transformación")
-    # ... (texto de explicación) ...
-    
-    # 1. Limpieza y Agrupación (Esta línea ahora es segura)
+
+    # 1. Limpieza y Agrupación (Esta línea ahora es segura gracias a la normalización en load_data)
     df['education'] = df['education'].replace({0: 4, 5: 4, 6: 4}) 
-    df['marriage'] = df['marriage'].replace({0: 3})               
+    df['marriage'] = df['marriage'].replace({0: 3})
     
     # 2. Definición de Features
     FEATURES = ['limit_bal', 'age', 'sex', 'education', 'marriage', 
@@ -256,4 +237,5 @@ with tabs[5]:
             st.success(f"✅ RIESGO BAJO. Probabilidad de incumplimiento: {proba:.2%}")
 
             st.markdown("**Acción Inmediata:** Monitoreo estándar.")
+
 

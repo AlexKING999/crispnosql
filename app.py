@@ -29,11 +29,15 @@ db = firestore.client()
 # --- FUNCIÓN DE CARGA (Cacheada para eficiencia) ---
 @st.cache_data(ttl=600)
 def load_data_from_firestore():
-    # Colección con 30,000 registros
     users_ref = db.collection('credito_clientes') 
     docs = users_ref.stream()
     data = [doc.to_dict() for doc in docs]
     df = pd.DataFrame(data)
+    
+    # *** CORRECCIÓN CRÍTICA: NORMALIZACIÓN DE COLUMNAS ***
+    # Esto asegura que 'EDUCATION' o 'Education' se convierta en 'education'
+    # y que el código de preparación no falle.
+    df.columns = [str(col).lower() for col in df.columns] 
     
     # Conversión de tipos (necesaria tras cargar desde Firestore)
     for col in df.columns:
@@ -42,7 +46,7 @@ def load_data_from_firestore():
         except:
             pass
             
-    if 'unnamed:_0' in df.columns: # Eliminamos la columna ID si existe
+    if 'unnamed:_0' in df.columns: 
         df = df.drop(columns=['unnamed:_0'])
         
     return df
@@ -103,13 +107,9 @@ with tabs[2]:
     df = df_raw.copy()
     
     st.subheader("Estrategia de Transformación")
-    st.markdown("""
-    1. **Limpieza:** Manejo de valores atípicos/desconocidos en `education` y `marriage`.
-    2. **Ingeniería de Features:** Selección de variables clave (saldo, edad, historial de pago).
-    3. **Codificación:** Aplicación de **One-Hot Encoding** (`pd.get_dummies`) a variables categóricas (género, educación, estado civil) para el modelo.
-    """)
+    # ... (texto de explicación) ...
     
-    # 1. Limpieza y Agrupación
+    # 1. Limpieza y Agrupación (Esta línea ahora es segura)
     df['education'] = df['education'].replace({0: 4, 5: 4, 6: 4}) 
     df['marriage'] = df['marriage'].replace({0: 3})               
     
@@ -117,7 +117,7 @@ with tabs[2]:
     FEATURES = ['limit_bal', 'age', 'sex', 'education', 'marriage', 
                 'pay_0', 'bill_amt1', 'pay_amt1']
     TARGET = 'default_payment_next_month'
-
+    
     # 3. Codificación (One-Hot Encoding)
     df_prepared = pd.get_dummies(df[FEATURES], columns=['sex', 'education', 'marriage'], drop_first=True, dtype=int)
     df_prepared[TARGET] = df[TARGET]
@@ -256,3 +256,4 @@ with tabs[5]:
             st.success(f"✅ RIESGO BAJO. Probabilidad de incumplimiento: {proba:.2%}")
 
             st.markdown("**Acción Inmediata:** Monitoreo estándar.")
+

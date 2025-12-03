@@ -49,6 +49,11 @@ def load_data_from_firestore():
 
 # --- NAVEGACIÓN CRISP-DM (Las 6 fases) ---
 df_raw = load_data_from_firestore()
+# >>> AÑADIR ESTAS LÍNEAS TEMPORALMENTE PARA DEBUG:
+st.sidebar.subheader("DEBUG: Estado del DataFrame")
+st.sidebar.write(f"Filas cargadas: {df_raw.shape[0]}")
+st.sidebar.write(f"Columnas detectadas: {list(df_raw.columns)}")
+# <<< FIN DEBUG
 
 tabs = st.tabs(["1. Negocio", "2. Adquisición y Comprensión", "3. Preparación", "4. Modelado", "5. Evaluación", "6. Despliegue"])
 
@@ -249,4 +254,5 @@ with tabs[5]:
             st.markdown("**Acción Inmediata:** Revisión de crédito y posible contacto proactivo.")
         else:
             st.success(f"✅ RIESGO BAJO. Probabilidad de incumplimiento: {proba:.2%}")
+
             st.markdown("**Acción Inmediata:** Monitoreo estándar.")
